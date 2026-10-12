@@ -68,6 +68,15 @@ ament_target_dependencies(xsens_mtw_visualization
 )
 
 
+# -------------------- latency_eval --------------------
+add_executable(latency_eval ../tests/latency_eval.cpp)
+
+ament_target_dependencies(latency_eval
+  rclcpp
+  imu_msgs
+)
+
+
 # -------------------------- Install --------------------------
 
 install(
@@ -97,6 +106,11 @@ install(
 
 install(
   TARGETS xsens_mtw_visualization
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(
+  TARGETS latency_eval
   DESTINATION lib/${PROJECT_NAME}
 )
 

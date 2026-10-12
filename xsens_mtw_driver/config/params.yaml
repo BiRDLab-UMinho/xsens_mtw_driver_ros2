@@ -1,15 +1,39 @@
 /**:
   ros__parameters:
-    one_topic_per_imu: true             # bool    publish one topic per IMU or one mono topic
+    one_topic_per_imu: false            # bool    publish one topic per IMU or one mono topic
     mtw_topic_name: "xsens_imu_data"    # string  Topic name for the mono topic or prefix of the topic name for one topic per IMU
+    imu_prefix: "00B493"                # string  shared device ID prefix for all IMUs
+    imu_mapping:                        # list    alternating [suffix, name] pairs — leave empty to disable
+      [
+        "A1", "R_Hand",
+        "AE", "L_Hand",
+        "B2", "L_Shoulder",
+        "B4", "R_Shoulder",
+        "AF", "Sternum",
+        "A9", "Pelvis",
+        "AB", "Head",
+        "9F", "L_UArm",
+        "B3", "R_FArm",
+        "A0", "L_FArm",
+        "B1", "R_UArm",
+        "B0", "L_ULeg",
+        "AC", "R_ULeg",
+        "9E", "R_Foot",
+        "A8", "L_Foot",
+        "AA", "R_LLeg",
+        "AD", "L_LLeg",
+      ]
 
 xsens_mtw_manager:
   ros__parameters:
-    ros2_rate: 100                      # int     ROS2 data publish rate
-    imu_rate: 100                       # int     see supported update rates [120, 100, 80, 60, 40]
+    ros2_rate: 60                      # int     ROS2 data publish rate
+    imu_rate: 60                       # int     see supported update rates [120, 100, 80, 60, 40]
     imu_reset_on_record: true           # bool    reset IMU orientation on record start
     radio_channel: 25                   # int     range: 11 to 25
     use_magnetometer: false             # bool    for quaternion orientation calculation
+
+    auto_ready: true                     # bool    start publishing automatically once MTws connect
+    auto_ready_settle_s: 5.0            # float   seconds of stable connection count before auto-start
 
     use_synchronization: true           # bool    Use synchronization with the Xsens MTw Manager
     synchronization_topic: "xsens_sync" # string  Topic name for synchronization messages
@@ -19,18 +43,7 @@ xsens_mtw_visualization:
   ros__parameters:
     imu_spacing: 0.5                    # float   spacing between IMUs in meters
     use_imu_mapping: false              # bool    use the IMU mapping to publish the TFs in a more comprehensible way
-    imu_prefix: "00B483"                # string  prefix of the IMU IDs (e.g. "00B483"), only needed if imu mapping is enabled
-    imu_mapping:
-      [
-        "A1", "torso_imu",
-        "84", "pelvis_imu",
-        "9D", "femur_l_imu",
-        "9C", "femur_r_imu",
-        "A4", "tibia_l_imu",
-        "A0", "tibia_r_imu",
-        "83", "calcn_l_imu",
-        "9F", "calcn_r_imu"
-      ]
+    # imu_prefix and imu_mapping are now shared via /**:  (see top of this file)
 
     # A dictionary for the imu_mapping would be more practical, but cannot be used in ROS2 parameters.
     # Make sure to adjust the TF offsets in the xsens_mtw_visualization node when using a different setup.

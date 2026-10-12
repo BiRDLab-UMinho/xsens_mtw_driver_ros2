@@ -12,6 +12,7 @@ MtwCallback::MtwCallback(int mtwIndex, XsDevice* device, size_t maxBufferSize)
 	: m_mtwIndex(mtwIndex)
 	, m_device(device)
 	, m_maxBufferSize(maxBufferSize)
+	, m_clock(std::make_shared<rclcpp::Clock>(RCL_SYSTEM_TIME))
 {}
 
 bool MtwCallback::dataAvailable() const
@@ -28,6 +29,14 @@ XsDataPacket const * MtwCallback::getOldestPacket() const
 	XsMutexLocker lock(m_mutex);
 	XsDataPacket const * packet = &m_packetBuffer.front();
 	return packet;
+}
+
+rclcpp::Time MtwCallback::getOldestReceiveStamp() const
+{
+	XsMutexLocker lock(m_mutex);
+	if (m_receiveStampBuffer.empty())
+		return rclcpp::Time(0, 0, RCL_SYSTEM_TIME);
+	return m_receiveStampBuffer.front();
 }
 
 // Returns empty packet on timeout
@@ -53,6 +62,8 @@ void MtwCallback::deleteOldestPacket()
 {
 	XsMutexLocker lock(m_mutex);
 	m_packetBuffer.pop_front();
+	if (!m_receiveStampBuffer.empty())
+		m_receiveStampBuffer.pop_front();
 }
 
 int MtwCallback::getMtwIndex() const
@@ -68,17 +79,18 @@ XsDevice const & MtwCallback::device() const
 
 void MtwCallback::onLiveDataAvailable(XsDevice*, const XsDataPacket* packet)
 {
-	//std::unique_lock<std::mutex> lock(m_stdmutex);
-	//ros::Time now = ros::Time::now();
-
 	XsMutexLocker lock(m_mutex);
 	// NOTE: Processing of packets should not be done in this thread.
 
 	m_packetBuffer.push_back(*packet);
+	m_receiveStampBuffer.push_back(m_clock->now());
+
 	if (m_packetBuffer.size() > 300)
 	{
 		std::cout << std::endl;
-		deleteOldestPacket();
+		m_packetBuffer.pop_front();
+		if (!m_receiveStampBuffer.empty())
+			m_receiveStampBuffer.pop_front();
 	}
 	/*
 	assert(packet != 0);

@@ -52,6 +52,36 @@ This project contains a ROS2 driver for the Xsens MTw Awinda system sensors.
 
 Tested with Ubuntu 22.04 (ROS2 Humble, ROS2 Rolling) and 24.04 (ROS2 Jazzy).
 
+### USB permissions (one-time setup, survives all reboots)
+
+The Awinda Station requires a udev rule so the driver can access it without `sudo`. Run this **once** on any new machine:
+
+```bash
+# Xsens vendor ID is 2639 — verify with: lsusb | grep -i xsens
+echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2639", MODE="0666", GROUP="plugdev"' \
+    | sudo tee /etc/udev/rules.d/99-xsens.rules
+
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+
+sudo usermod -aG plugdev $USER
+newgrp plugdev   # apply group change to current session
+```
+
+After this the rule is permanent — no action needed on future reboots.
+
+> **Important:** never run MT Manager and the ROS2 driver simultaneously — they both claim the USB handle exclusively. Always close MT Manager before launching the driver.
+
+### Workspace sourcing
+
+Add to `~/.bashrc` so every terminal is workspace-ready automatically:
+
+```bash
+echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
+echo "source ~/ws_ergoaware/install/setup.bash" >> ~/.bashrc
+source ~/.bashrc
+```
+
 ## Usage
 
 Follow the usual ROS2 workspace setup by building and sourcing the package.
@@ -122,6 +152,8 @@ If the `ros2_rate` is larger than the `imu_rate`, the node will upsample the IMU
 | use_synchronization     | Enable Sync functionality                                 |
 | synchronization_topic   | Topic name for synchronization messages                   |
 | synchronization_line    | Select the Awinda Station synchronization line (1 or 2)   |
+| auto_ready              | Start publishing automatically when MTw connections are stable (no service call needed) |
+| auto_ready_settle_s     | Seconds of stable connection count before auto-start (default 2.0 s); increase if your MTws are slow to connect |
 
 #### Synchronization
 
@@ -156,10 +188,12 @@ Starting the `xsens_mtw_manager` node through launch files will prevent `conio.c
 Example:
 
 ```sh
-ros2 run xsens_mtw_driver xsens_mtw_manager --ros-args -p ros2_rate:=100.0 -p imu_rate:=100
+ros2 run xsens_mtw_driver xsens_mtw_manager --ros-args -p ros2_rate:=60 -p imu_rate:=60
 ```
 
-> Make sure to use the correct parameter type!
+> Make sure to use the correct parameter type! Both `ros2_rate` and `imu_rate` are declared as
+> integers in code, so passing a decimal value (e.g. `60.0`) will fail with a "Wrong parameter
+> type" error — use `60`, not `60.0`.
 
 or
 
@@ -192,7 +226,71 @@ ros2 launch xsens_mtw_driver xsens_mtw_visualization.launch.py
 
 ---
 
+### Message fields
+
+`imu_msgs/IMUData` — the per-IMU data structure embedded in both `IMUDataArray` and `IMUDataSingle`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | Device ID (e.g. `00B493A1`) |
+| `orientation` | `imu_msgs/Quaternion` | Orientation from VQF filter (w, x, y, z) |
+| `angular_velocity` | `geometry_msgs/Vector3` | rad/s |
+| `linear_acceleration` | `geometry_msgs/Vector3` | m/s² |
+| `magnetic_field` | `geometry_msgs/Vector3` | µT |
+| `receive_stamp` | `builtin_interfaces/Time` | `CLOCK_REALTIME` timestamp set the instant the USB callback received this packet |
+| `is_fresh` | `bool` | `true` = new hardware packet this cycle; `false` = stale (last known data reused because no new packet arrived) |
+| `packet_counter` | `uint16` | Xsens hardware 16-bit packet sequence counter (wraps at 65535); gaps > 1 indicate wireless or USB drops |
+
+`IMUDataArray.timestamp` / `IMUDataSingle.timestamp` — `uint64` nanoseconds (`CLOCK_REALTIME`) stamped immediately before `publisher->publish()`.
+
+---
+
+## Latency evaluation
+
+A standalone subscriber node is included to characterise driver timing. It does not require hardware changes — run it while the driver is publishing.
+
+```bash
+ros2 run xsens_mtw_driver latency_eval
+ros2 run xsens_mtw_driver latency_eval --ros-args \
+    -p duration_s:=60.0 -p expected_imu_count:=3 -p save_dir:=/tmp
+```
+
+After `duration_s` seconds (or Ctrl-C) two files are written to `save_dir`:
+- `xsens_latency_report_YYYYMMDD_HHMMSS.txt` — human-readable report (mirrored to console)
+- `xsens_latency_data_YYYYMMDD_HHMMSS.csv` — raw per-message samples
+
+| Section | Metric | What it reveals |
+|---------|--------|-----------------|
+| [1] Publish rate jitter | Inter-message arrival intervals | OS scheduling jitter, DDS overhead |
+| [2] ROS2 transport | `t_callback − msg.timestamp` | Intra-machine DDS latency |
+| [3] Buffer hold time | `msg.timestamp − receive_stamp` (fresh only) | Time sample waited in circular buffer; bounded by `1/imu_rate` |
+| [4] Stale sample rate | `is_fresh == false` count per IMU | Missed hardware packets |
+| [5] Packet counter gaps | `packet_counter` sequence deltas | Drops in the wireless or USB path |
+
+> True end-to-end latency (sensor acquisition → computer) cannot be measured in software — the wireless radio and USB chain are opaque without an external hardware sync pulse.
+
+---
+
 ## Troubleshooting
+
+- **Problem**: `No wireless masters found!` error immediately on launch.
+
+  **Cause**: MT Manager (or another process) is still holding the USB device.
+
+  **Solution**: Close MT Manager first, then relaunch the driver. Only one process can own the Awinda Station at a time.
+
+  ```bash
+  sudo pkill mtmanager
+  ros2 launch xsens_mtw_driver xsens_mtw_manager.launch.py
+  ```
+
+- **Problem**: MTws connect but publishing never starts.
+
+  **Solution**: With `auto_ready: true` (default) publishing starts automatically after `auto_ready_settle_s` seconds of stable connections. If it fires too early (not all MTws connected yet), increase `auto_ready_settle_s` in `params.yaml`. With `auto_ready: false` you must call the service manually:
+
+  ```bash
+  ros2 service call /xsens_mtw_manager/get_ready xsens_srvs/srv/Trigger
+  ```
 
 - **Problem**: Xsens MTw Manager node cannot find the connected Xsens MTw Docking Station / Dongle.
 

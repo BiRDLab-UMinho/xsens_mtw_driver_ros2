@@ -19,10 +19,10 @@ XsensManager::XsensManager(const std::string & name)
     this->declare_parameter("mtw_topic_name", "xsens_imu_data");
     m_mtwTopicName = this->get_parameter("mtw_topic_name").as_string();
 
-    this->declare_parameter("ros2_rate", 100);
+    this->declare_parameter("ros2_rate", 60);
     m_ros2Rate = this->get_parameter("ros2_rate").as_int();
 
-    this->declare_parameter("imu_rate", 100);
+    this->declare_parameter("imu_rate", 60);
     m_imuRate = this->get_parameter("imu_rate").as_int();
 
     this->declare_parameter("radio_channel", 25);
@@ -42,6 +42,20 @@ XsensManager::XsensManager(const std::string & name)
 
     this->declare_parameter("synchronization_line", 2);
     m_syncLine = this->get_parameter("synchronization_line").as_int();
+
+    this->declare_parameter("auto_ready", true);
+    m_autoReady = this->get_parameter("auto_ready").as_bool();
+
+    this->declare_parameter("auto_ready_settle_s", 2.0);
+    m_autoReadySettleS = this->get_parameter("auto_ready_settle_s").as_double();
+
+    this->declare_parameter("imu_prefix", std::string(""));
+    m_imuPrefix = this->get_parameter("imu_prefix").as_string();
+
+    this->declare_parameter("imu_mapping", std::vector<std::string>{});
+    auto mapping = this->get_parameter("imu_mapping").as_string_array();
+    for (size_t i = 0; i + 1 < mapping.size(); i += 2)
+        m_imuNames[mapping[i]] = mapping[i + 1];
 
     RCLCPP_INFO(this->get_logger(), "ROS2 parameters loaded:");
     RCLCPP_INFO(this->get_logger(), "- one_topic_per_imu: %s", m_oneTopicPerImu ? "true" : "false");
@@ -205,7 +219,13 @@ void XsensManager::initialMasterSetup()
     // --------------------------------------------------------------------
     // DEVICE - MTW SCAN
     RCLCPP_INFO(this->get_logger(), "Waiting for MTw's to wirelessly connect...");
-    RCLCPP_WARN(this->get_logger(), "Press 'y' to start measurement or 'q' to quit.");
+    if (!m_autoReady)
+        RCLCPP_WARN(this->get_logger(), "Press 'y' to start measurement or 'q' to quit.");
+    else
+        RCLCPP_INFO(this->get_logger(),
+            "auto_ready: will start automatically after %.1f s of stable connections.",
+            m_autoReadySettleS);
+    m_autoReadyLastCountChange = std::chrono::steady_clock::now();
     m_connectedMTWCount = m_wirelessMasterCallback.getWirelessMTWs().size();
 
     // --------------------------------------------------------------------
@@ -223,11 +243,41 @@ void XsensManager::connectMTWsCallback()
     if (m_waitForConnections && rclcpp::ok())
     {
         // Connect to MTw's if not connected
-        size_t nextCount = m_wirelessMasterCallback.getWirelessMTWs().size();
+        auto connectedMTWs = m_wirelessMasterCallback.getWirelessMTWs();
+        size_t nextCount = connectedMTWs.size();
         if (nextCount != m_connectedMTWCount)
         {
-            RCLCPP_INFO_STREAM(this->get_logger(), "Number of connected MTw's: " << (int)nextCount);
+            std::ostringstream ids;
+            for (auto it = connectedMTWs.begin(); it != connectedMTWs.end(); ++it)
+            {
+                if (it != connectedMTWs.begin()) ids << ", ";
+                std::string devId = (*it)->deviceId().toString().toStdString();
+                ids << devId;
+                if (!m_imuPrefix.empty() && devId.size() > m_imuPrefix.size()) {
+                    std::string suffix = devId.substr(m_imuPrefix.size());
+                    auto it2 = m_imuNames.find(suffix);
+                    if (it2 != m_imuNames.end()) ids << " (" << it2->second << ")";
+                }
+            }
+            RCLCPP_INFO(this->get_logger(), "Connected MTw's (%zu): [%s]",
+                nextCount, ids.str().c_str());
             m_connectedMTWCount = nextCount;
+            m_autoReadyLastCountChange = std::chrono::steady_clock::now();
+        }
+
+        // Auto-ready: start once the connected count has been stable for settle_s seconds
+        if (m_autoReady && m_connectedMTWCount > 0) {
+            using Clk = std::chrono::steady_clock;
+            double stable_s = std::chrono::duration<double>(
+                Clk::now() - m_autoReadyLastCountChange).count();
+            if (stable_s >= m_autoReadySettleS) {
+                RCLCPP_INFO(this->get_logger(),
+                    "auto_ready: %zu MTw(s) stable for %.1f s — starting automatically.",
+                    m_connectedMTWCount, stable_s);
+                m_keyInterrupt = true;
+                m_waitForConnections = false;
+                return;
+            }
         }
 
         // Check if any key is pressed
@@ -311,22 +361,27 @@ void XsensManager::completeInitialization()
         return;
     }
 
-    // ROS2 Publisher
+    // ROS2 Publisher — best_effort: no retransmission of stale sensor data
+    auto sensor_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     if (m_oneTopicPerImu){
         // One-topic-per-imu
         for (size_t i = 0; i < m_connectedMTWCount; ++i)
         {
             std::string mtwID = m_mtwDeviceIds[i].toString().toStdString();
-			auto imu_pub = this->create_publisher<imu_msgs::msg::IMUDataSingle>(m_mtwTopicName + "_" + mtwID, 10);
+			auto imu_pub = this->create_publisher<imu_msgs::msg::IMUDataSingle>(m_mtwTopicName + "_" + mtwID, sensor_qos);
 			m_imuPublishers.push_back(imu_pub);
 		}
     } else {
         // One-topic-for-all
-        m_imuPublisher = this->create_publisher<imu_msgs::msg::IMUDataArray>(m_mtwTopicName, 10);
+        m_imuPublisher = this->create_publisher<imu_msgs::msg::IMUDataArray>(m_mtwTopicName, sensor_qos);
     }
 
-    RCLCPP_WARN(this->get_logger(), "Publishers started, press 'q' to quit");
-    RCLCPP_WARN(this->get_logger(), "Press 'r' to start and 's' to stop recording");
+    RCLCPP_INFO(this->get_logger(),
+        "Publishers started. IMU data is now streaming on the ROS2 topic.");
+    RCLCPP_INFO(this->get_logger(),
+        "To save IMU data to CSV: call service /xsens_mtw_manager/start_recording (stop: /stop_recording).");
+    RCLCPP_INFO(this->get_logger(),
+        "Keyboard shortcuts 'r' (record) / 's' (stop) / 'q' (quit) only work with 'ros2 run', not 'ros2 launch'.");
 
     // Set status to READY
     m_status = READY;
@@ -424,6 +479,12 @@ void XsensManager::publishDataCallback()
                 // Reset m_dataTracker if new data is available
                 m_dataTracker[i] = 0;
 
+                // Latency fields
+                m_imuDataMsg[i].receive_stamp = m_mtwCallbacks[i]->getOldestReceiveStamp();
+                m_imuDataMsg[i].is_fresh = true;
+                if (packet->containsPacketCounter())
+                    m_imuDataMsg[i].packet_counter = packet->packetCounter();
+
                 // Synchronization step if enabled
                 if(m_syncSuccessful){
                     XsTriggerIndicationData xtid = packet->triggerIndication(m_lineDateIdentifier);
@@ -437,7 +498,10 @@ void XsensManager::publishDataCallback()
 
             m_mtwCallbacks[i]->deleteOldestPacket();
         }
-        else m_dataTracker[i]++;
+        else {
+            m_dataTracker[i]++;
+            m_imuDataMsg[i].is_fresh = false;
+        }
 
         // Always update VQF filter with the latest data (either new or last known)
         vqf_real_t quat[4];

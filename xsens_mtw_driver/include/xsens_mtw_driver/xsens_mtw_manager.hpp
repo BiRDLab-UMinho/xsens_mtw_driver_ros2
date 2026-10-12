@@ -2,6 +2,7 @@
 
 // Standard
 #include <fstream>
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -103,8 +104,13 @@ private:
     bool m_imuResetOnRecord;
     bool m_useMagnetometer;
     bool m_useSynchronization;
+    bool   m_autoReady;
+    double m_autoReadySettleS;
+    std::chrono::steady_clock::time_point m_autoReadyLastCountChange;
     std::string m_mtwTopicName;
     std::string m_syncTopicName;
+    std::string m_imuPrefix;
+    std::map<std::string, std::string> m_imuNames;  // suffix → human-readable name
 
     // ROS2 Callbacks
     rclcpp::TimerBase::SharedPtr m_connectTimer;

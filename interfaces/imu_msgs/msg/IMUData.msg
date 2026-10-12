@@ -3,3 +3,6 @@ imu_msgs/Quaternion orientation
 geometry_msgs/Vector3 angular_velocity
 geometry_msgs/Vector3 linear_acceleration
 geometry_msgs/Vector3 magnetic_field
+builtin_interfaces/Time receive_stamp
+bool is_fresh
+uint16 packet_counter
