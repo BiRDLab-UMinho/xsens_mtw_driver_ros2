@@ -2,26 +2,26 @@
   ros__parameters:
     one_topic_per_imu: false            # bool    publish one topic per IMU or one mono topic
     mtw_topic_name: "xsens_imu_data"    # string  Topic name for the mono topic or prefix of the topic name for one topic per IMU
-    imu_prefix: "00B493"                # string  shared device ID prefix for all IMUs
+    imu_prefix: "00B4"                  # string  shared device ID prefix for all IMUs
     imu_mapping:                        # list    alternating [suffix, name] pairs — leave empty to disable
-      [
-        "A1", "R_Hand",
-        "AE", "L_Hand",
-        "B2", "L_Shoulder",
-        "B4", "R_Shoulder",
-        "AF", "Sternum",
-        "A9", "Pelvis",
-        "AB", "Head",
-        "9F", "L_UArm",
-        "B3", "R_FArm",
-        "A0", "L_FArm",
-        "B1", "R_UArm",
-        "B0", "L_ULeg",
-        "AC", "R_ULeg",
-        "9E", "R_Foot",
-        "A8", "L_Foot",
-        "AA", "R_LLeg",
-        "AD", "L_LLeg",
+      [                                 # keep in sync with reba_dl_estimator segments.DEFAULT_SENSOR_ID_TO_SEGMENT
+        "93A1", "R_Hand",
+        "93AE", "L_Hand",
+        "93B2", "L_Shoulder",
+        "D7BB", "R_Shoulder",
+        "93AF", "Sternum",
+        "93A9", "Pelvis",
+        "93AB", "Head",
+        "939F", "L_UArm",
+        "E060", "R_FArm",
+        "93A0", "L_FArm",
+        "93B1", "R_UArm",
+        "93B0", "L_ULeg",
+        "93AC", "R_ULeg",
+        "939E", "R_Foot",
+        "93A8", "L_Foot",
+        "93AA", "R_LLeg",
+        "93AD", "L_LLeg",
       ]
 
 xsens_mtw_manager:

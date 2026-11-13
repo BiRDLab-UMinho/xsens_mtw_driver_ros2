@@ -87,6 +87,8 @@ XsensManager::XsensManager(const std::string & name)
         std::bind(&XsensManager::imuResetCallback, this, _1, _2));
     m_restartService = this->create_service<xsrvs::Trigger>(name + "/restart",
         std::bind(&XsensManager::restartDriverCallback, this, _1, _2));
+    m_powerOffService = this->create_service<xsrvs::Trigger>(name + "/power_off",
+        std::bind(&XsensManager::powerOffCallback, this, _1, _2));
 
     RCLCPP_INFO(this->get_logger(), "Services started");
 
@@ -961,6 +963,41 @@ void XsensManager::resetIMUs()
     RCLCPP_WARN(this->get_logger(), "IMUs reset");
 }
 
+// Turn off all connected MTw's (master must be in configuration mode)
+void XsensManager::powerOffMTWs()
+{
+    RCLCPP_INFO(this->get_logger(), "Turning off MTw's...");
+    std::ostringstream mtw_success, mtw_fail;
+    for (int i = 0; i < static_cast<int>(m_connectedMTWCount); ++i)
+    {
+        // Transport mode equals IMU shutdown
+        if (!m_mtwDevices[i]->setTransportMode(true))
+        {
+            mtw_fail << m_mtwDevices[i]->deviceId().toString().toStdString() << " ";
+            RCLCPP_INFO_STREAM(
+                this->get_logger(),
+                "Waiting 15s due to Xsens transport mode cooldown..."
+            );
+            // If transport mode fails, Xsens blocks another request for ~15s
+            XsTime::msleep(15000);
+        }
+        else mtw_success << m_mtwDevices[i]->deviceId().toString().toStdString() << " ";
+    }
+    if (mtw_fail.str().empty())
+        RCLCPP_INFO(this->get_logger(), "All MTw's turned off successfully");
+    else
+    {
+        RCLCPP_INFO_STREAM(
+            this->get_logger(),
+            "MTw's turned off: " << mtw_success.str()
+        );
+        RCLCPP_INFO_STREAM(
+            this->get_logger(),
+            "MTw's failed to turn off: " << mtw_fail.str()
+        );
+    }
+}
+
 // Service: Return the current status to the service request
 void XsensManager::statusCallback(
     const std::shared_ptr<xsrvs::Trigger::Request> t_request,
@@ -1109,6 +1146,37 @@ void XsensManager::restartDriverCallback(const std::shared_ptr<xsrvs::Trigger::R
     }
 }
 
+// Service: Stop publishing and turn off all MTw's, without shutting down the node
+// (e.g. under ros2 launch, where the y/n prompt on exit can't get keyboard input)
+void XsensManager::powerOffCallback(const std::shared_ptr<xsrvs::Trigger::Request> t_request,
+    std::shared_ptr<xsrvs::Trigger::Response> t_response)
+{
+    (void)t_request;
+
+    if (m_status != READY && m_status != RECORDING)
+    {
+        t_response->hardware_status = m_status;
+        RCLCPP_WARN(this->get_logger(), "No MTw's are initialized yet");
+        return;
+    }
+
+    if (m_status == RECORDING) stopRecording();
+    m_publishTimer->cancel();
+
+    if (!m_wirelessMasterDevice->gotoConfig())
+    {
+        RCLCPP_INFO_STREAM(
+            this->get_logger(),
+            "Failed to put device " << *m_wirelessMasterDevice << " into configuration mode."
+        );
+    }
+    powerOffMTWs();
+
+    // Nothing left to stream; /restart reconnects once the MTw's are switched on again
+    m_status = NO_CONNECTION;
+    t_response->hardware_status = m_status;
+}
+
 // Cleanup all variables, optionally turn off MTw's and shutdown the master device
 void XsensManager::cleanupAndShutdown()
 {
@@ -1147,41 +1215,12 @@ void XsensManager::cleanupAndShutdown()
             if (_kbhit())
             {
                 char keypressed = static_cast<char>(_getch());
-                std::ostringstream mtw_success, mtw_fail;
 
                 switch (keypressed)
                 {
                 case 'y':
-                    RCLCPP_INFO(this->get_logger(), "Turning off MTw's...");
                     interruption = true;
-                    for (int i = 0; i < static_cast<int>(m_connectedMTWCount); ++i)
-                    {
-                        // Transport mode equals IMU shutdown
-                        if (!m_mtwDevices[i]->setTransportMode(true))
-                        {
-                            mtw_fail << m_mtwDevices[i]->deviceId().toString().toStdString() << " ";
-                            RCLCPP_INFO_STREAM(
-                                this->get_logger(),
-                                "Waiting 15s due to Xsens transport mode cooldown..."
-                            );
-                            // If transport mode fails, Xsens blocks another request for ~15s
-                            XsTime::msleep(15000);
-                        }
-                        else mtw_success << m_mtwDevices[i]->deviceId().toString().toStdString() << " ";
-                    }
-                    if (mtw_fail.str().empty())
-                        RCLCPP_INFO(this->get_logger(), "All MTw's turned off successfully");
-                    else
-                    {
-                        RCLCPP_INFO_STREAM(
-                            this->get_logger(),
-                            "MTw's turned off: " << mtw_success.str()
-                        );
-                        RCLCPP_INFO_STREAM(
-                            this->get_logger(),
-                            "MTw's failed to turn off: " << mtw_fail.str()
-                        );
-                    }
+                    powerOffMTWs();
                     break;
                 case 'n':
                     interruption = true;

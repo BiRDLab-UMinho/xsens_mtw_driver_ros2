@@ -128,6 +128,7 @@ private:
     rclcpp::Service<xsrvs::Trigger>::SharedPtr m_stopService;
     rclcpp::Service<xsrvs::Trigger>::SharedPtr m_imuResetService;
     rclcpp::Service<xsrvs::Trigger>::SharedPtr m_restartService;
+    rclcpp::Service<xsrvs::Trigger>::SharedPtr m_powerOffService;
     bool m_restartRequested;
 
     // Xsens
@@ -165,6 +166,7 @@ private:
         const std::shared_ptr<xsrvs::StartRecording::Request> t_request = nullptr);
     void stopRecording();
     void resetIMUs();
+    void powerOffMTWs();
     void statusCallback(const std::shared_ptr<xsrvs::Trigger::Request>,
         std::shared_ptr<xsrvs::Trigger::Response>);
     void getReadyCallback(const std::shared_ptr<xsrvs::Trigger::Request>,
@@ -176,6 +178,8 @@ private:
     void imuResetCallback(const std::shared_ptr<xsrvs::Trigger::Request>,
         std::shared_ptr<xsrvs::Trigger::Response>);
     void restartDriverCallback(const std::shared_ptr<xsrvs::Trigger::Request>,
+        std::shared_ptr<xsrvs::Trigger::Response>);
+    void powerOffCallback(const std::shared_ptr<xsrvs::Trigger::Request>,
         std::shared_ptr<xsrvs::Trigger::Response>);
     void logAndRaiseSigInt(std::string);
 };

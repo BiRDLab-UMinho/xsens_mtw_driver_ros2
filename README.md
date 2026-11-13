@@ -125,6 +125,7 @@ The `xsens_mtw_manager` offers custom services listed below, for which custom me
 - `/xsens_mtw_manager/stop_recording`
 - `/xsens_mtw_manager/imu_reset`
 - `/xsens_mtw_manager/restart`
+- `/xsens_mtw_manager/power_off`
 
 The `/get_ready` service is used to accept the currently connected MTw's and start to publish the data.
 
@@ -133,6 +134,8 @@ The `/start_recording` service optionally offers a id (int64) to be set which wi
 The `/imu_reset` service resets the Quaternion filter and thus all quaternions to identity quaternions. By default this will happen at the start of every recording.
 
 The `/restart` service restarts the node and can be used as an alternative way for restarting the ROS2 node.
+
+The `/power_off` service stops publishing and turns off all connected MTw's (transport mode), without stopping the node. Unlike the y/n prompt on shutdown, it also works when the driver runs under `ros2 launch`. Use `/restart` to reconnect once the MTw's are switched on again.
 
 #### Custom parameters
 
